@@ -1,6 +1,7 @@
 ﻿import express from "express";
 import cors from "cors";
 import irrigationRoutes from "./routes/irrigation.routes.js";
+import calendarRoutes from "./routes/calendar.routes.js";
 
 const app = express();
 const PORT = 5000;
@@ -17,6 +18,7 @@ app.get("/api/health", (req, res) => {
 });
 
 app.use("/api/irrigation", irrigationRoutes);
+app.use("/api/calendar", calendarRoutes);
 
 app.listen(PORT, () => {
   console.log(`AgriSense backend running on http://localhost:${PORT}`);
