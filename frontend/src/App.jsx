@@ -1,13 +1,24 @@
 import { useEffect, useState } from "react";
 
 export default function App() {
-  const [locationStatus, setLocationStatus] = useState("locating"); // locating | ready | denied
+  const [locationStatus, setLocationStatus] = useState("locating");
   const [coords, setCoords] = useState(null);
   const [soilType, setSoilType] = useState("loamy");
   const [crop, setCrop] = useState("wheat");
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  // Cultivation calendar state
+  const [sowingDate, setSowingDate] = useState("");
+  const [calendarResult, setCalendarResult] = useState(null);
+  const [calendarLoading, setCalendarLoading] = useState(false);
+  const [calendarError, setCalendarError] = useState(null);
+
+  // Sowing-window check state
+  const [sowingWindowResult, setSowingWindowResult] = useState(null);
+  const [sowingWindowLoading, setSowingWindowLoading] = useState(false);
+  const [sowingWindowError, setSowingWindowError] = useState(null);
 
   useEffect(() => {
     if (!navigator.geolocation) {
@@ -41,6 +52,46 @@ export default function App() {
       setError("Could not get advice. Is the backend running?");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function getCalendarStage() {
+    if (!sowingDate) {
+      setCalendarError("Please pick a sowing date first.");
+      return;
+    }
+    setCalendarLoading(true);
+    setCalendarError(null);
+    setCalendarResult(null);
+    try {
+      const res = await fetch("http://localhost:5000/api/calendar/stage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ crop, sowingDate }),
+      });
+      if (!res.ok) throw new Error("Server error");
+      const data = await res.json();
+      setCalendarResult(data);
+    } catch (err) {
+      setCalendarError("Could not get calendar info. Is the backend running?");
+    } finally {
+      setCalendarLoading(false);
+    }
+  }
+
+  async function checkSowingWindow() {
+    setSowingWindowLoading(true);
+    setSowingWindowError(null);
+    setSowingWindowResult(null);
+    try {
+      const res = await fetch(`http://localhost:5000/api/calendar/sowing-window/${crop}`);
+      if (!res.ok) throw new Error("Server error");
+      const data = await res.json();
+      setSowingWindowResult(data);
+    } catch (err) {
+      setSowingWindowError("Could not check sowing window. Is the backend running?");
+    } finally {
+      setSowingWindowLoading(false);
     }
   }
 
@@ -81,7 +132,7 @@ export default function App() {
           </label>
 
           <button onClick={getAdvice} disabled={loading}>
-            {loading ? "Checking..." : "Get Today's Advice"}
+            {loading ? "Checking..." : "Get Today's Irrigation Advice"}
           </button>
         </div>
       )}
@@ -100,6 +151,118 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* --- Cultivation Calendar Section --- */}
+      <section className="section-block">
+        <h2 className="section-title">📅 Cultivation Calendar</h2>
+
+        {/* Sowing-window check: for before you've planted anything */}
+        <div className="form-card">
+          <p className="sowing-window-prompt">
+            Not sown yet? Check if now is a good time for <strong>{crop}</strong>.
+          </p>
+          <button onClick={checkSowingWindow} disabled={sowingWindowLoading}>
+            {sowingWindowLoading ? "Checking..." : "Is Now a Good Time to Sow?"}
+          </button>
+        </div>
+
+        {sowingWindowError && <div className="status-banner status-error">{sowingWindowError}</div>}
+
+        {sowingWindowResult && (
+          <div
+            className={`status-banner ${
+              sowingWindowResult.isCurrentlyIdealWindow ? "status-connected" : "status-checking"
+            }`}
+          >
+            {sowingWindowResult.isCurrentlyIdealWindow
+              ? `✅ Yes — now is within the ideal sowing window for ${sowingWindowResult.crop} (${sowingWindowResult.recommendedWindow}).`
+              : `⏳ Not the ideal window right now. Recommended window for ${sowingWindowResult.crop} is ${sowingWindowResult.recommendedWindow}.`}
+          </div>
+        )}
+
+        {/* Stage tracker: for a crop you've already sown/transplanted */}
+        <div className="form-card">
+          <label>
+            {crop === "tomato" ? "Transplanting date" : "Sowing date"}
+            <input
+              type="date"
+              value={sowingDate}
+              onChange={(e) => setSowingDate(e.target.value)}
+            />
+          </label>
+          <button onClick={getCalendarStage} disabled={calendarLoading}>
+            {calendarLoading ? "Checking..." : "Check Crop Stage"}
+          </button>
+        </div>
+
+        {calendarError && <div className="status-banner status-error">{calendarError}</div>}
+
+        {calendarResult && calendarResult.status === "in_progress" && (
+          <div className="calendar-card">
+            <div className="calendar-header">
+              <span className="calendar-icon">{calendarResult.icon}</span>
+              <div>
+                <div className="calendar-crop-name">{calendarResult.crop}</div>
+                <div className="calendar-days">Day {calendarResult.daysSinceSowing} since sowing</div>
+              </div>
+            </div>
+
+            <div className="stage-badge">{formatStageName(calendarResult.currentStage.name)}</div>
+
+            <div className="progress-bar-track">
+              <div
+                className="progress-bar-fill"
+                style={{
+                  width: `${
+                    (calendarResult.currentStage.dayWithinStage /
+                      calendarResult.currentStage.totalDaysInStage) *
+                    100
+                  }%`,
+                }}
+              />
+            </div>
+            <p className="progress-label">
+              Day {calendarResult.currentStage.dayWithinStage} of{" "}
+              {calendarResult.currentStage.totalDaysInStage} in this stage —{" "}
+              {calendarResult.currentStage.daysRemainingInStage} days remaining
+            </p>
+
+            <div className="calendar-info-block">
+              <strong>🌱 What to do now:</strong>
+              <p>{calendarResult.currentStage.care}</p>
+            </div>
+
+            <div className="calendar-info-block">
+              <strong>🧪 Fertilizer:</strong>
+              <p>{calendarResult.currentStage.npk}</p>
+            </div>
+
+            {calendarResult.nextStage && (
+              <p className="next-stage-note">
+                ⏭️ Next stage ({formatStageName(calendarResult.nextStage.name)}) begins in{" "}
+                {calendarResult.nextStage.startsInDays} days.
+              </p>
+            )}
+          </div>
+        )}
+
+        {calendarResult && calendarResult.status === "not_yet_sown" && (
+          <div className="status-banner status-checking">
+            📅 {calendarResult.message} ({calendarResult.daysUntilStart} days to go)
+          </div>
+        )}
+
+        {calendarResult && calendarResult.status === "past_maturity" && (
+          <div className="status-banner status-error">⚠️ {calendarResult.message}</div>
+        )}
+      </section>
     </div>
   );
+}
+
+function formatStageName(name) {
+  return name
+    .split("_")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
 }
