@@ -1,24 +1,20 @@
 import { useEffect, useState } from "react";
 
+const STORAGE_KEY = "agrisense_settings";
+
 export default function App() {
   const [locationStatus, setLocationStatus] = useState("locating");
   const [coords, setCoords] = useState(null);
-  const [soilType, setSoilType] = useState("loamy");
+
   const [crop, setCrop] = useState("wheat");
-  const [result, setResult] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-
-  // Cultivation calendar state
+  const [soilType, setSoilType] = useState("loamy");
   const [sowingDate, setSowingDate] = useState("");
-  const [calendarResult, setCalendarResult] = useState(null);
-  const [calendarLoading, setCalendarLoading] = useState(false);
-  const [calendarError, setCalendarError] = useState(null);
 
-  // Sowing-window check state
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [dashboardError, setDashboardError] = useState(null);
+  const [irrigationResult, setIrrigationResult] = useState(null);
+  const [calendarResult, setCalendarResult] = useState(null);
   const [sowingWindowResult, setSowingWindowResult] = useState(null);
-  const [sowingWindowLoading, setSowingWindowLoading] = useState(false);
-  const [sowingWindowError, setSowingWindowError] = useState(null);
 
   // Disease detection state
   const [photoFile, setPhotoFile] = useState(null);
@@ -26,6 +22,20 @@ export default function App() {
   const [diseaseResult, setDiseaseResult] = useState(null);
   const [diseaseLoading, setDiseaseLoading] = useState(false);
   const [diseaseError, setDiseaseError] = useState(null);
+
+  const [showSettings, setShowSettings] = useState(true);
+
+  // Load saved settings on first load
+  useEffect(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      setCrop(parsed.crop || "wheat");
+      setSoilType(parsed.soilType || "loamy");
+      setSowingDate(parsed.sowingDate || "");
+      if (parsed.sowingDate) setShowSettings(false); // hide settings if already configured
+    }
+  }, []);
 
   useEffect(() => {
     if (!navigator.geolocation) {
@@ -42,65 +52,63 @@ export default function App() {
     );
   }, []);
 
-  async function getAdvice() {
-    setLoading(true);
-    setError(null);
-    setResult(null);
-    try {
-      const res = await fetch("http://localhost:5000/api/irrigation/advice", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ crop, soilType, ...coords }),
-      });
-      if (!res.ok) throw new Error("Server error");
-      const data = await res.json();
-      setResult(data);
-    } catch (err) {
-      setError("Could not get advice. Is the backend running?");
-    } finally {
-      setLoading(false);
-    }
+  function saveSettings() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ crop, soilType, sowingDate }));
+    setShowSettings(false);
+    refreshDashboard();
   }
 
-  async function getCalendarStage() {
-    if (!sowingDate) {
-      setCalendarError("Please pick a sowing date first.");
-      return;
-    }
-    setCalendarLoading(true);
-    setCalendarError(null);
+  async function refreshDashboard() {
+    setDashboardLoading(true);
+    setDashboardError(null);
+    setIrrigationResult(null);
     setCalendarResult(null);
+    setSowingWindowResult(null);
+
     try {
-      const res = await fetch("http://localhost:5000/api/calendar/stage", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ crop, sowingDate }),
-      });
-      if (!res.ok) throw new Error("Server error");
-      const data = await res.json();
-      setCalendarResult(data);
+      const requests = [
+        fetch("http://localhost:5000/api/irrigation/advice", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ crop, soilType, ...coords }),
+        }).then((r) => r.json()),
+      ];
+
+      if (sowingDate) {
+        requests.push(
+          fetch("http://localhost:5000/api/calendar/stage", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ crop, sowingDate }),
+          }).then((r) => r.json())
+        );
+      } else {
+        requests.push(
+          fetch(`http://localhost:5000/api/calendar/sowing-window/${crop}`).then((r) => r.json())
+        );
+      }
+
+      const [irrigation, second] = await Promise.all(requests);
+      setIrrigationResult(irrigation);
+      if (sowingDate) {
+        setCalendarResult(second);
+      } else {
+        setSowingWindowResult(second);
+      }
     } catch (err) {
-      setCalendarError("Could not get calendar info. Is the backend running?");
+      setDashboardError("Could not load dashboard. Is the backend running?");
     } finally {
-      setCalendarLoading(false);
+      setDashboardLoading(false);
     }
   }
 
-  async function checkSowingWindow() {
-    setSowingWindowLoading(true);
-    setSowingWindowError(null);
-    setSowingWindowResult(null);
-    try {
-      const res = await fetch(`http://localhost:5000/api/calendar/sowing-window/${crop}`);
-      if (!res.ok) throw new Error("Server error");
-      const data = await res.json();
-      setSowingWindowResult(data);
-    } catch (err) {
-      setSowingWindowError("Could not check sowing window. Is the backend running?");
-    } finally {
-      setSowingWindowLoading(false);
+  // Auto-refresh once location + settings are ready
+  useEffect(() => {
+    if (locationStatus === "ready" && !showSettings) {
+      refreshDashboard();
     }
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locationStatus, showSettings]);
 
   function handlePhotoSelect(e) {
     const file = e.target.files[0];
@@ -142,6 +150,14 @@ export default function App() {
     }
   }
 
+  function getFieldActivitySuggestion() {
+    if (!irrigationResult) return null;
+    const { rainProbability, maxWindSpeed } = irrigationResult.forecast;
+    if (rainProbability >= 60) return "🌧️ Rain likely — avoid field spraying today.";
+    if (maxWindSpeed >= 15) return "💨 Windy conditions — better suited for irrigation, not spraying.";
+    return "☀️ Good conditions for general field work today.";
+  }
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -159,7 +175,8 @@ export default function App() {
         </div>
       )}
 
-      {locationStatus === "ready" && (
+      {/* --- Settings (shown first time, or when editing) --- */}
+      {showSettings && locationStatus === "ready" && (
         <div className="form-card">
           <label>
             Crop
@@ -178,172 +195,165 @@ export default function App() {
             </select>
           </label>
 
-          <button onClick={getAdvice} disabled={loading}>
-            {loading ? "Checking..." : "Get Today's Irrigation Advice"}
-          </button>
-        </div>
-      )}
-
-      {error && <div className="status-banner status-error">{error}</div>}
-
-      {result && (
-        <div className={`advice-card verdict-${result.advice.verdict}`}>
-          <div className="advice-icon">{result.advice.icon}</div>
-          <div className="advice-verdict">{result.advice.verdict}</div>
-          <p className="advice-reason">{result.advice.reason}</p>
-          <div className="advice-meta">
-            <span>🌡️ {Math.round(result.forecast.avgTemperature)}°C</span>
-            <span>💧 {Math.round(result.forecast.avgHumidity)}% humidity</span>
-            <span>🐛 Disease risk: {result.advice.diseaseRisk}</span>
-          </div>
-        </div>
-      )}
-
-      {/* --- Cultivation Calendar Section --- */}
-      <section className="section-block">
-        <h2 className="section-title">📅 Cultivation Calendar</h2>
-
-        <div className="form-card">
-          <p className="sowing-window-prompt">
-            Not sown yet? Check if now is a good time for <strong>{crop}</strong>.
-          </p>
-          <button onClick={checkSowingWindow} disabled={sowingWindowLoading}>
-            {sowingWindowLoading ? "Checking..." : "Is Now a Good Time to Sow?"}
-          </button>
-        </div>
-
-        {sowingWindowError && <div className="status-banner status-error">{sowingWindowError}</div>}
-
-        {sowingWindowResult && (
-          <div
-            className={`status-banner ${
-              sowingWindowResult.isCurrentlyIdealWindow ? "status-connected" : "status-checking"
-            }`}
-          >
-            {sowingWindowResult.isCurrentlyIdealWindow
-              ? `✅ Yes — now is within the ideal sowing window for ${sowingWindowResult.crop} (${sowingWindowResult.recommendedWindow}).`
-              : `⏳ Not the ideal window right now. Recommended window for ${sowingWindowResult.crop} is ${sowingWindowResult.recommendedWindow}.`}
-          </div>
-        )}
-
-        <div className="form-card">
           <label>
-            {crop === "tomato" ? "Transplanting date" : "Sowing date"}
+            {crop === "tomato" ? "Transplanting date (leave blank if not sown yet)" : "Sowing date (leave blank if not sown yet)"}
             <input
               type="date"
               value={sowingDate}
               onChange={(e) => setSowingDate(e.target.value)}
             />
           </label>
-          <button onClick={getCalendarStage} disabled={calendarLoading}>
-            {calendarLoading ? "Checking..." : "Check Crop Stage"}
-          </button>
+
+          <button onClick={saveSettings}>Save & View Dashboard</button>
         </div>
+      )}
 
-        {calendarError && <div className="status-banner status-error">{calendarError}</div>}
+      {/* --- Dashboard (main view) --- */}
+      {!showSettings && locationStatus === "ready" && (
+        <>
+          <div className="dashboard-toolbar">
+            <span className="dashboard-crop-label">
+              {crop === "wheat" ? "🌾" : "🍅"} {crop.charAt(0).toUpperCase() + crop.slice(1)}
+            </span>
+            <button className="link-button" onClick={() => setShowSettings(true)}>
+              ⚙️ Edit
+            </button>
+            <button className="link-button" onClick={refreshDashboard} disabled={dashboardLoading}>
+              🔄 Refresh
+            </button>
+          </div>
 
-        {calendarResult && calendarResult.status === "in_progress" && (
-          <div className="calendar-card">
-            <div className="calendar-header">
-              <span className="calendar-icon">{calendarResult.icon}</span>
-              <div>
-                <div className="calendar-crop-name">{calendarResult.crop}</div>
-                <div className="calendar-days">Day {calendarResult.daysSinceSowing} since sowing</div>
+          {dashboardLoading && (
+            <div className="status-banner status-checking">Loading today's advice...</div>
+          )}
+          {dashboardError && <div className="status-banner status-error">{dashboardError}</div>}
+
+          {irrigationResult && (
+            <div className={`advice-card verdict-${irrigationResult.advice.verdict}`}>
+              <div className="advice-icon">{irrigationResult.advice.icon}</div>
+              <div className="advice-verdict">{irrigationResult.advice.verdict}</div>
+              <p className="advice-reason">{irrigationResult.advice.reason}</p>
+              <div className="advice-meta">
+                <span>🌡️ {Math.round(irrigationResult.forecast.avgTemperature)}°C</span>
+                <span>💧 {Math.round(irrigationResult.forecast.avgHumidity)}% humidity</span>
+                <span>🐛 Disease risk: {irrigationResult.advice.diseaseRisk}</span>
               </div>
             </div>
-
-            <div className="stage-badge">{formatStageName(calendarResult.currentStage.name)}</div>
-
-            <div className="progress-bar-track">
-              <div
-                className="progress-bar-fill"
-                style={{
-                  width: `${
-                    (calendarResult.currentStage.dayWithinStage /
-                      calendarResult.currentStage.totalDaysInStage) *
-                    100
-                  }%`,
-                }}
-              />
-            </div>
-            <p className="progress-label">
-              Day {calendarResult.currentStage.dayWithinStage} of{" "}
-              {calendarResult.currentStage.totalDaysInStage} in this stage —{" "}
-              {calendarResult.currentStage.daysRemainingInStage} days remaining
-            </p>
-
-            <div className="calendar-info-block">
-              <strong>🌱 What to do now:</strong>
-              <p>{calendarResult.currentStage.care}</p>
-            </div>
-
-            <div className="calendar-info-block">
-              <strong>🧪 Fertilizer:</strong>
-              <p>{calendarResult.currentStage.npk}</p>
-            </div>
-
-            {calendarResult.nextStage && (
-              <p className="next-stage-note">
-                ⏭️ Next stage ({formatStageName(calendarResult.nextStage.name)}) begins in{" "}
-                {calendarResult.nextStage.startsInDays} days.
-              </p>
-            )}
-          </div>
-        )}
-
-        {calendarResult && calendarResult.status === "not_yet_sown" && (
-          <div className="status-banner status-checking">
-            📅 {calendarResult.message} ({calendarResult.daysUntilStart} days to go)
-          </div>
-        )}
-
-        {calendarResult && calendarResult.status === "past_maturity" && (
-          <div className="status-banner status-error">⚠️ {calendarResult.message}</div>
-        )}
-      </section>
-
-      {/* --- Pest/Disease Detection Section --- */}
-      <section className="section-block">
-        <h2 className="section-title">🐛 Check Plant Health</h2>
-        <div className="form-card">
-          <label>
-            Upload a photo of the leaf
-            <input type="file" accept="image/*" capture="environment" onChange={handlePhotoSelect} />
-          </label>
-
-          {photoPreview && (
-            <img src={photoPreview} alt="Selected leaf" className="photo-preview" />
           )}
 
-          <button onClick={analyzePhoto} disabled={diseaseLoading || !photoFile}>
-            {diseaseLoading ? "Analyzing..." : "Analyze Photo"}
-          </button>
-        </div>
-
-        {diseaseError && <div className="status-banner status-error">{diseaseError}</div>}
-
-        {diseaseResult && diseaseResult.status === "low_confidence" && (
-          <div className="status-banner status-checking">📷 {diseaseResult.message}</div>
-        )}
-
-        {diseaseResult && diseaseResult.status === "ok" && (
-          <div className={`disease-card ${diseaseResult.isHealthy ? "healthy" : "unhealthy"}`}>
-            <div className="disease-icon">{diseaseResult.isHealthy ? "✅" : "🐛"}</div>
-            <div className="disease-name">
-              {formatDiseaseName(diseaseResult.predictedClass)}
+          {irrigationResult && (
+            <div className="status-banner status-checking">
+              {getFieldActivitySuggestion()}
             </div>
-            <p className="disease-confidence">
-              Confidence: {Math.round(diseaseResult.confidence * 100)}%
-            </p>
-            {diseaseResult.sprayAdvice && (
+          )}
+
+          {calendarResult && calendarResult.status === "in_progress" && (
+            <div className="calendar-card">
+              <div className="calendar-header">
+                <span className="calendar-icon">{calendarResult.icon}</span>
+                <div>
+                  <div className="calendar-crop-name">{calendarResult.crop}</div>
+                  <div className="calendar-days">Day {calendarResult.daysSinceSowing} since sowing</div>
+                </div>
+              </div>
+
+              <div className="stage-badge">{formatStageName(calendarResult.currentStage.name)}</div>
+
+              <div className="progress-bar-track">
+                <div
+                  className="progress-bar-fill"
+                  style={{
+                    width: `${
+                      (calendarResult.currentStage.dayWithinStage /
+                        calendarResult.currentStage.totalDaysInStage) *
+                      100
+                    }%`,
+                  }}
+                />
+              </div>
+              <p className="progress-label">
+                Day {calendarResult.currentStage.dayWithinStage} of{" "}
+                {calendarResult.currentStage.totalDaysInStage} in this stage —{" "}
+                {calendarResult.currentStage.daysRemainingInStage} days remaining
+              </p>
+
               <div className="calendar-info-block">
-                <strong>💨 Spray timing:</strong>
-                <p>{diseaseResult.sprayAdvice}</p>
+                <strong>🌱 What to do now:</strong>
+                <p>{calendarResult.currentStage.care}</p>
+              </div>
+
+              <div className="calendar-info-block">
+                <strong>🧪 Fertilizer:</strong>
+                <p>{calendarResult.currentStage.npk}</p>
+              </div>
+
+              {calendarResult.nextStage && (
+                <p className="next-stage-note">
+                  ⏭️ Next stage ({formatStageName(calendarResult.nextStage.name)}) begins in{" "}
+                  {calendarResult.nextStage.startsInDays} days.
+                </p>
+              )}
+            </div>
+          )}
+
+          {calendarResult && calendarResult.status === "past_maturity" && (
+            <div className="status-banner status-error">⚠️ {calendarResult.message}</div>
+          )}
+
+          {sowingWindowResult && (
+            <div
+              className={`status-banner ${
+                sowingWindowResult.isCurrentlyIdealWindow ? "status-connected" : "status-checking"
+              }`}
+            >
+              {sowingWindowResult.isCurrentlyIdealWindow
+                ? `✅ Now is within the ideal sowing window for ${sowingWindowResult.crop} (${sowingWindowResult.recommendedWindow}).`
+                : `⏳ Not sown yet. Ideal window for ${sowingWindowResult.crop}: ${sowingWindowResult.recommendedWindow}.`}
+            </div>
+          )}
+
+          {/* --- Pest/Disease Detection --- */}
+          <section className="section-block">
+            <h2 className="section-title">🐛 Check Plant Health</h2>
+            <div className="form-card">
+              <label>
+                Upload a photo of the leaf
+                <input type="file" accept="image/*" capture="environment" onChange={handlePhotoSelect} />
+              </label>
+
+              {photoPreview && (
+                <img src={photoPreview} alt="Selected leaf" className="photo-preview" />
+              )}
+
+              <button onClick={analyzePhoto} disabled={diseaseLoading || !photoFile}>
+                {diseaseLoading ? "Analyzing..." : "Analyze Photo"}
+              </button>
+            </div>
+
+            {diseaseError && <div className="status-banner status-error">{diseaseError}</div>}
+
+            {diseaseResult && diseaseResult.status === "low_confidence" && (
+              <div className="status-banner status-checking">📷 {diseaseResult.message}</div>
+            )}
+
+            {diseaseResult && diseaseResult.status === "ok" && (
+              <div className={`disease-card ${diseaseResult.isHealthy ? "healthy" : "unhealthy"}`}>
+                <div className="disease-icon">{diseaseResult.isHealthy ? "✅" : "🐛"}</div>
+                <div className="disease-name">{formatDiseaseName(diseaseResult.predictedClass)}</div>
+                <p className="disease-confidence">
+                  Confidence: {Math.round(diseaseResult.confidence * 100)}%
+                </p>
+                {diseaseResult.sprayAdvice && (
+                  <div className="calendar-info-block">
+                    <strong>💨 Spray timing:</strong>
+                    <p>{diseaseResult.sprayAdvice}</p>
+                  </div>
+                )}
               </div>
             )}
-          </div>
-        )}
-      </section>
+          </section>
+        </>
+      )}
     </div>
   );
 }
@@ -356,7 +366,5 @@ function formatStageName(name) {
 }
 
 function formatDiseaseName(name) {
-  return name
-    .replace("Tomato___", "")
-    .replace(/_/g, " ");
+  return name.replace("Tomato___", "").replace(/_/g, " ");
 }
