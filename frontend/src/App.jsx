@@ -34,9 +34,13 @@ export default function App() {
   const [rainLoading, setRainLoading] = useState(false);
   const [rainError, setRainError] = useState(null);
 
+  // Mandi price state
+  const [mandiResult, setMandiResult] = useState(null);
+  const [mandiLoading, setMandiLoading] = useState(false);
+  const [mandiError, setMandiError] = useState(null);
+
   const [showSettings, setShowSettings] = useState(true);
 
-  // Load saved settings on first load
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
@@ -197,6 +201,22 @@ export default function App() {
       setRainError("Could not run simulation. Is the backend running?");
     } finally {
       setRainLoading(false);
+    }
+  }
+
+  async function getMandiPrices() {
+    setMandiLoading(true);
+    setMandiError(null);
+    setMandiResult(null);
+    try {
+      const res = await fetch(`http://localhost:5000/api/mandi/prices/${crop}`);
+      if (!res.ok) throw new Error("Server error");
+      const data = await res.json();
+      setMandiResult(data);
+    } catch (err) {
+      setMandiError("Could not fetch mandi prices. Is the backend running?");
+    } finally {
+      setMandiLoading(false);
     }
   }
 
@@ -486,6 +506,40 @@ export default function App() {
                 <p className="progress-label">
                   Irrigation need after this rain: <strong>{rainResult.irrigationNeed}</strong>
                 </p>
+              </div>
+            )}
+          </section>
+
+          {/* --- Mandi Price Info --- */}
+          <section className="section-block">
+            <h2 className="section-title">💰 Mandi Prices</h2>
+            <div className="form-card">
+              <p className="sowing-window-prompt">
+                Check today's wholesale market prices for <strong>{crop}</strong> across Uttar Pradesh.
+              </p>
+              <button onClick={getMandiPrices} disabled={mandiLoading}>
+                {mandiLoading ? "Fetching..." : "Check Mandi Prices"}
+              </button>
+            </div>
+
+            {mandiError && <div className="status-banner status-error">{mandiError}</div>}
+
+            {mandiResult && (
+              <div className="calendar-card">
+                <p className="progress-label">
+                  Average modal price: <strong>₹{mandiResult.averageModalPrice}/quintal</strong> across{" "}
+                  {mandiResult.marketsFound} markets
+                </p>
+                <div className="mandi-list">
+                  {mandiResult.markets.map((m, i) => (
+                    <div key={i} className="mandi-row">
+                      <div className="mandi-market">
+                        {m.market} <span className="mandi-district">({m.district})</span>
+                      </div>
+                      <div className="mandi-price">₹{m.modalPrice}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </section>

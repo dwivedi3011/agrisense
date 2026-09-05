@@ -333,3 +333,32 @@ body {
   cursor: pointer;
   padding: 6px 10px;
 }
+.mandi-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mandi-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  background: #f4f8f2;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.mandi-market {
+  color: #3a4a3a;
+}
+
+.mandi-district {
+  color: #8a9a8a;
+  font-size: 12px;
+}
+
+.mandi-price {
+  font-weight: 700;
+  color: #2f6d2f;
+}
