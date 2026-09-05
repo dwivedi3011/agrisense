@@ -20,6 +20,13 @@ export default function App() {
   const [sowingWindowLoading, setSowingWindowLoading] = useState(false);
   const [sowingWindowError, setSowingWindowError] = useState(null);
 
+  // Disease detection state
+  const [photoFile, setPhotoFile] = useState(null);
+  const [photoPreview, setPhotoPreview] = useState(null);
+  const [diseaseResult, setDiseaseResult] = useState(null);
+  const [diseaseLoading, setDiseaseLoading] = useState(false);
+  const [diseaseError, setDiseaseError] = useState(null);
+
   useEffect(() => {
     if (!navigator.geolocation) {
       setLocationStatus("denied");
@@ -95,6 +102,46 @@ export default function App() {
     }
   }
 
+  function handlePhotoSelect(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setPhotoFile(file);
+    setPhotoPreview(URL.createObjectURL(file));
+    setDiseaseResult(null);
+    setDiseaseError(null);
+  }
+
+  async function analyzePhoto() {
+    if (!photoFile) {
+      setDiseaseError("Please select a photo first.");
+      return;
+    }
+    setDiseaseLoading(true);
+    setDiseaseError(null);
+    setDiseaseResult(null);
+
+    const formData = new FormData();
+    formData.append("photo", photoFile);
+    if (coords) {
+      formData.append("latitude", coords.latitude);
+      formData.append("longitude", coords.longitude);
+    }
+
+    try {
+      const res = await fetch("http://localhost:5000/api/disease/analyze", {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) throw new Error("Server error");
+      const data = await res.json();
+      setDiseaseResult(data);
+    } catch (err) {
+      setDiseaseError("Could not analyze photo. Is the backend/ML service running?");
+    } finally {
+      setDiseaseLoading(false);
+    }
+  }
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -156,7 +203,6 @@ export default function App() {
       <section className="section-block">
         <h2 className="section-title">📅 Cultivation Calendar</h2>
 
-        {/* Sowing-window check: for before you've planted anything */}
         <div className="form-card">
           <p className="sowing-window-prompt">
             Not sown yet? Check if now is a good time for <strong>{crop}</strong>.
@@ -180,7 +226,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Stage tracker: for a crop you've already sown/transplanted */}
         <div className="form-card">
           <label>
             {crop === "tomato" ? "Transplanting date" : "Sowing date"}
@@ -256,6 +301,49 @@ export default function App() {
           <div className="status-banner status-error">⚠️ {calendarResult.message}</div>
         )}
       </section>
+
+      {/* --- Pest/Disease Detection Section --- */}
+      <section className="section-block">
+        <h2 className="section-title">🐛 Check Plant Health</h2>
+        <div className="form-card">
+          <label>
+            Upload a photo of the leaf
+            <input type="file" accept="image/*" capture="environment" onChange={handlePhotoSelect} />
+          </label>
+
+          {photoPreview && (
+            <img src={photoPreview} alt="Selected leaf" className="photo-preview" />
+          )}
+
+          <button onClick={analyzePhoto} disabled={diseaseLoading || !photoFile}>
+            {diseaseLoading ? "Analyzing..." : "Analyze Photo"}
+          </button>
+        </div>
+
+        {diseaseError && <div className="status-banner status-error">{diseaseError}</div>}
+
+        {diseaseResult && diseaseResult.status === "low_confidence" && (
+          <div className="status-banner status-checking">📷 {diseaseResult.message}</div>
+        )}
+
+        {diseaseResult && diseaseResult.status === "ok" && (
+          <div className={`disease-card ${diseaseResult.isHealthy ? "healthy" : "unhealthy"}`}>
+            <div className="disease-icon">{diseaseResult.isHealthy ? "✅" : "🐛"}</div>
+            <div className="disease-name">
+              {formatDiseaseName(diseaseResult.predictedClass)}
+            </div>
+            <p className="disease-confidence">
+              Confidence: {Math.round(diseaseResult.confidence * 100)}%
+            </p>
+            {diseaseResult.sprayAdvice && (
+              <div className="calendar-info-block">
+                <strong>💨 Spray timing:</strong>
+                <p>{diseaseResult.sprayAdvice}</p>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
@@ -265,4 +353,10 @@ function formatStageName(name) {
     .split("_")
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
+}
+
+function formatDiseaseName(name) {
+  return name
+    .replace("Tomato___", "")
+    .replace(/_/g, " ");
 }
