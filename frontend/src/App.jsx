@@ -23,6 +23,17 @@ export default function App() {
   const [diseaseLoading, setDiseaseLoading] = useState(false);
   const [diseaseError, setDiseaseError] = useState(null);
 
+  // What-if simulator state
+  const [currentMoisture, setCurrentMoisture] = useState(40);
+  const [simDays, setSimDays] = useState(5);
+  const [rainAmount, setRainAmount] = useState(15);
+  const [skipResult, setSkipResult] = useState(null);
+  const [skipLoading, setSkipLoading] = useState(false);
+  const [skipError, setSkipError] = useState(null);
+  const [rainResult, setRainResult] = useState(null);
+  const [rainLoading, setRainLoading] = useState(false);
+  const [rainError, setRainError] = useState(null);
+
   const [showSettings, setShowSettings] = useState(true);
 
   // Load saved settings on first load
@@ -33,7 +44,7 @@ export default function App() {
       setCrop(parsed.crop || "wheat");
       setSoilType(parsed.soilType || "loamy");
       setSowingDate(parsed.sowingDate || "");
-      if (parsed.sowingDate) setShowSettings(false); // hide settings if already configured
+      if (parsed.sowingDate) setShowSettings(false);
     }
   }, []);
 
@@ -102,7 +113,6 @@ export default function App() {
     }
   }
 
-  // Auto-refresh once location + settings are ready
   useEffect(() => {
     if (locationStatus === "ready" && !showSettings) {
       refreshDashboard();
@@ -150,6 +160,46 @@ export default function App() {
     }
   }
 
+  async function runSkipSimulation() {
+    setSkipLoading(true);
+    setSkipError(null);
+    setSkipResult(null);
+    try {
+      const res = await fetch("http://localhost:5000/api/whatif/skip-irrigation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentMoisturePercent: currentMoisture, soilType, days: simDays, ...coords }),
+      });
+      if (!res.ok) throw new Error("Server error");
+      const data = await res.json();
+      setSkipResult(data);
+    } catch (err) {
+      setSkipError("Could not run simulation. Is the backend running?");
+    } finally {
+      setSkipLoading(false);
+    }
+  }
+
+  async function runRainSimulation() {
+    setRainLoading(true);
+    setRainError(null);
+    setRainResult(null);
+    try {
+      const res = await fetch("http://localhost:5000/api/whatif/rain-scenario", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentMoisturePercent: currentMoisture, soilType, rainMm: rainAmount }),
+      });
+      if (!res.ok) throw new Error("Server error");
+      const data = await res.json();
+      setRainResult(data);
+    } catch (err) {
+      setRainError("Could not run simulation. Is the backend running?");
+    } finally {
+      setRainLoading(false);
+    }
+  }
+
   function getFieldActivitySuggestion() {
     if (!irrigationResult) return null;
     const { rainProbability, maxWindSpeed } = irrigationResult.forecast;
@@ -175,7 +225,7 @@ export default function App() {
         </div>
       )}
 
-      {/* --- Settings (shown first time, or when editing) --- */}
+      {/* --- Settings --- */}
       {showSettings && locationStatus === "ready" && (
         <div className="form-card">
           <label>
@@ -208,7 +258,7 @@ export default function App() {
         </div>
       )}
 
-      {/* --- Dashboard (main view) --- */}
+      {/* --- Dashboard --- */}
       {!showSettings && locationStatus === "ready" && (
         <>
           <div className="dashboard-toolbar">
@@ -349,6 +399,93 @@ export default function App() {
                     <p>{diseaseResult.sprayAdvice}</p>
                   </div>
                 )}
+              </div>
+            )}
+          </section>
+
+          {/* --- What-If Simulator --- */}
+          <section className="section-block">
+            <h2 className="section-title">🔮 What-If Simulator</h2>
+
+            <div className="form-card">
+              <label>
+                Current soil moisture: {currentMoisture}%
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={currentMoisture}
+                  onChange={(e) => setCurrentMoisture(Number(e.target.value))}
+                />
+              </label>
+            </div>
+
+            <div className="form-card">
+              <p className="sowing-window-prompt">What if I skip irrigation for a few days?</p>
+              <label>
+                Days to simulate: {simDays}
+                <input
+                  type="range"
+                  min="1"
+                  max="10"
+                  value={simDays}
+                  onChange={(e) => setSimDays(Number(e.target.value))}
+                />
+              </label>
+              <button onClick={runSkipSimulation} disabled={skipLoading}>
+                {skipLoading ? "Simulating..." : "Simulate Skipping Irrigation"}
+              </button>
+            </div>
+
+            {skipError && <div className="status-banner status-error">{skipError}</div>}
+
+            {skipResult && (
+              <div className="calendar-card">
+                <p className="progress-label">
+                  Estimated daily moisture loss: {skipResult.dailyLossRate}% per day
+                </p>
+                <div className="projection-grid">
+                  {skipResult.projection.map((p) => (
+                    <div key={p.day} className={`projection-cell stress-${p.stressLevel}`}>
+                      <div className="projection-day">Day {p.day}</div>
+                      <div className="projection-moisture">{p.moisturePercent}%</div>
+                      <div className="projection-stress">{p.stressLevel}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="form-card">
+              <p className="sowing-window-prompt">What if it rains a certain amount?</p>
+              <label>
+                Expected rainfall: {rainAmount}mm
+                <input
+                  type="range"
+                  min="0"
+                  max="50"
+                  value={rainAmount}
+                  onChange={(e) => setRainAmount(Number(e.target.value))}
+                />
+              </label>
+              <button onClick={runRainSimulation} disabled={rainLoading}>
+                {rainLoading ? "Simulating..." : "Simulate Rainfall"}
+              </button>
+            </div>
+
+            {rainError && <div className="status-banner status-error">{rainError}</div>}
+
+            {rainResult && (
+              <div className="calendar-card">
+                <p className="progress-label">
+                  +{rainResult.moistureGain}% moisture gain from {rainAmount}mm of rain
+                </p>
+                <div className="stage-badge">
+                  Projected moisture: {rainResult.projectedMoisturePercent}%
+                </div>
+                <p className="progress-label">
+                  Irrigation need after this rain: <strong>{rainResult.irrigationNeed}</strong>
+                </p>
               </div>
             )}
           </section>
