@@ -5,6 +5,7 @@
   import diseaseRoutes from "./routes/disease.routes.js";
   import whatIfRoutes from "./routes/whatIf.routes.js";
   import mandiRoutes from "./routes/mandi.routes.js";
+  import sensorRoutes from "./routes/sensor.routes.js";
   import dotenv from "dotenv";
 
   const app = express();
@@ -27,6 +28,7 @@
   app.use("/api/disease", diseaseRoutes);
   app.use("/api/whatif", whatIfRoutes);
   app.use("/api/mandi", mandiRoutes);
+  app.use("/api/sensor", sensorRoutes);
 
 
   app.listen(PORT, () => {

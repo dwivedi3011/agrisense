@@ -362,3 +362,45 @@ body {
   font-weight: 700;
   color: #2f6d2f;
 }
+.sensor-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sensor-icon {
+  font-size: 28px;
+}
+
+.sensor-label {
+  font-weight: 700;
+  color: #2f6d2f;
+  font-size: 14px;
+}
+
+.sensor-status {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sensor-status.status-OPTIMAL { color: #1e6b1e; }
+.sensor-status.status-MODERATE { color: #a06a00; }
+.sensor-status.status-LOW { color: #a02020; }
+
+.sensor-reading-value {
+  font-size: 36px;
+  font-weight: 700;
+  color: #2f6d2f;
+  text-align: center;
+}
+
+.sensor-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.sensor-buttons button {
+  flex: 1;
+  font-size: 13px;
+  padding: 10px;
+}

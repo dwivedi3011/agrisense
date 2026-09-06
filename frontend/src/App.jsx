@@ -34,6 +34,10 @@ export default function App() {
   const [rainLoading, setRainLoading] = useState(false);
   const [rainError, setRainError] = useState(null);
 
+  // Simulated sensor state
+  const [sensorReading, setSensorReading] = useState(null);
+  const [sensorLoading, setSensorLoading] = useState(false);
+
   // Mandi price state
   const [mandiResult, setMandiResult] = useState(null);
   const [mandiLoading, setMandiLoading] = useState(false);
@@ -124,6 +128,13 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationStatus, showSettings]);
 
+  useEffect(() => {
+    if (locationStatus === "ready" && !showSettings) {
+      fetchSensorReading();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locationStatus, showSettings]);
+
   function handlePhotoSelect(e) {
     const file = e.target.files[0];
     if (!file) return;
@@ -201,6 +212,35 @@ export default function App() {
       setRainError("Could not run simulation. Is the backend running?");
     } finally {
       setRainLoading(false);
+    }
+  }
+
+  async function fetchSensorReading() {
+    setSensorLoading(true);
+    try {
+      const params = new URLSearchParams({ soilType, ...coords });
+      const res = await fetch(`http://localhost:5000/api/sensor/reading?${params}`);
+      const data = await res.json();
+      setSensorReading(data);
+      setCurrentMoisture(Math.round(data.soilMoisturePercent));
+    } catch (err) {
+      console.error("Sensor fetch failed", err);
+    } finally {
+      setSensorLoading(false);
+    }
+  }
+
+  async function triggerIrrigationEvent() {
+    setSensorLoading(true);
+    try {
+      const res = await fetch("http://localhost:5000/api/sensor/simulate-irrigation", { method: "POST" });
+      const data = await res.json();
+      setSensorReading(data.reading);
+      setCurrentMoisture(Math.round(data.reading.soilMoisturePercent));
+    } catch (err) {
+      console.error("Irrigation simulation failed", err);
+    } finally {
+      setSensorLoading(false);
     }
   }
 
@@ -428,16 +468,26 @@ export default function App() {
             <h2 className="section-title">🔮 What-If Simulator</h2>
 
             <div className="form-card">
-              <label>
-                Current soil moisture: {currentMoisture}%
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={currentMoisture}
-                  onChange={(e) => setCurrentMoisture(Number(e.target.value))}
-                />
-              </label>
+              <div className="sensor-header">
+                <span className="sensor-icon">📡</span>
+                <div>
+                  <div className="sensor-label">Simulated Soil Sensor</div>
+                  {sensorReading && (
+                    <div className={`sensor-status status-${sensorReading.status}`}>
+                      {sensorReading.status} — {sensorReading.minutesSinceLastIrrigation} min since last irrigation
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="sensor-reading-value">{currentMoisture}%</div>
+              <div className="sensor-buttons">
+                <button onClick={fetchSensorReading} disabled={sensorLoading}>
+                  🔄 Refresh Reading
+                </button>
+                <button onClick={triggerIrrigationEvent} disabled={sensorLoading}>
+                  💧 Simulate Irrigation
+                </button>
+              </div>
             </div>
 
             <div className="form-card">
